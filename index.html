@@ -158,8 +158,11 @@
         <label class="chk-lbl"><input type="checkbox" id="chk-labels" checked /> Cities &amp; Hwys</label>
         <button id="btn-autotrim">Trim &gt;45m</button>
         <button id="btn-reset">Reset (110)</button>
-        <button id="btn-copy" class="primary">Copy Keep/Cut List</button>
+        <button id="btn-copy" class="primary" style="background:#16a34a;border-color:#16a34a;padding:6px 12px;">Send / Copy My Changes</button>
       </div>
+    </div>
+    <div id="owner-banner" style="padding:6px 14px;background:var(--card-alt);border-bottom:1px solid var(--border);font-size:12px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <span><strong>Branch Review:</strong> 1) Tap your branch above &rarr; 2) Tap any county/parish on the map or list to turn it <strong style="color:var(--rose);">OFF</strong> or <strong style="color:var(--emerald);">ON</strong> &rarr; 3) Tap <strong style="color:#16a34a;">Send / Copy My Changes</strong>.</span>
     </div>
 
     <div class="main">
@@ -498,13 +501,23 @@
           ctx.lineWidth = isOut && !dim ? 1.8 : 0.9;
           ctx.stroke();
         } else if (origTid && appMode === 'admin') {
-          ctx.fillStyle = isLight ? 'rgba(148,163,184,0.22)' : 'rgba(100,116,139,0.22)';
+          const dim = !vis.has(origTid);
+          ctx.fillStyle = isLight ? (dim ? 'rgba(226,232,240,0.25)' : 'rgba(239,68,68,0.14)') : (dim ? 'rgba(51,65,85,0.2)' : 'rgba(239,68,68,0.18)');
           ctx.fill();
-          ctx.setLineDash([3, 3]);
-          ctx.strokeStyle = '#94a3b8';
-          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 3]);
+          ctx.strokeStyle = dim ? '#64748b' : '#ef4444';
+          ctx.lineWidth = dim ? 0.8 : 1.5;
           ctx.stroke();
           ctx.setLineDash([]);
+          if (!dim && view.scale > 55) {
+            const [cx, cy] = proj(c.c[0], c.c[1]);
+            ctx.save();
+            ctx.font = '700 10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#ef4444';
+            ctx.fillText('OFF', cx, cy + 3);
+            ctx.restore();
+          }
         } else {
           ctx.strokeStyle = isLight ? '#e2e8f0' : '#1e293b';
           ctx.lineWidth = 0.6;
@@ -679,7 +692,7 @@
           if (st.origTid) st.tid = st.tid ? null : st.origTid;
           else if (st.tid) st.tid = null;
           else if (activeTerr && TERRITORIES[activeTerr].state === hoveredCounty.s) st.tid = activeTerr;
-          renderPills(); renderSidebar(); draw();
+          saveLocal(); renderPills(); renderSidebar(); draw();
         }
       }
     });
@@ -881,7 +894,7 @@
         hdr.innerHTML = `<div style="font-size:14px;font-weight:800;display:flex;justify-content:space-between;"><span>${t.name} (${t.state})</span><span style="color:var(--muted);font-weight:600;">${kept} kept &middot; ${zips} ZIPs</span></div>
           <div style="color:var(--muted);margin-top:4px;">${t.officeNote}</div>
           <div style="margin-top:8px;display:flex;align-items:center;gap:6px;"><span>Hub:</span><select id="sel-hub" style="flex:1;">${opts}</select></div>`;
-        hdr.querySelector('#sel-hub').onchange = e => { hubIndex[activeTerr] = +e.target.value; renderPills(); renderSidebar(); draw(); };
+        hdr.querySelector('#sel-hub').onchange = e => { hubIndex[activeTerr] = +e.target.value; saveLocal(); renderPills(); renderSidebar(); draw(); };
       } else {
         hdr.innerHTML = `<div style="font-size:14px;font-weight:800;">Coverage &amp; 45-Min Drive Audit</div>
           <div class="stat-grid">
@@ -905,7 +918,7 @@
           <div style="font-size:11px;font-weight:700;color:${isKept?'var(--emerald)':'var(--amber)'};">${isKept?'KEEP':'CUT'}</div></div>`;
         d.onclick = () => {
           if (st.origTid) st.tid = st.tid ? null : st.origTid; else st.tid = null;
-          renderPills(); renderSidebar(); draw();
+          saveLocal(); renderPills(); renderSidebar(); draw();
         };
         list.appendChild(d);
       });
@@ -915,14 +928,14 @@
       appMode = 'client';
       document.getElementById('btn-mode-client').classList.add('active');
       document.getElementById('btn-mode-admin').classList.remove('active');
-      document.getElementById('admin-controls').style.display = 'none';
+      document.getElementById('admin-controls').style.display = 'none'; document.getElementById('owner-banner').style.display = 'none';
       updateLegend(); renderSidebar(); draw();
     };
     document.getElementById('btn-mode-admin').onclick = () => {
       appMode = 'admin';
       document.getElementById('btn-mode-admin').classList.add('active');
       document.getElementById('btn-mode-client').classList.remove('active');
-      document.getElementById('admin-controls').style.display = 'flex';
+      document.getElementById('admin-controls').style.display = 'flex'; document.getElementById('owner-banner').style.display = 'flex';
       updateLegend(); renderSidebar(); draw();
     };
     document.getElementById('btn-theme').onclick = () => {
@@ -937,23 +950,60 @@
     document.getElementById('btn-zfit').onclick = () => { if (activeTerr) fitTerritory(activeTerr); else fitBBox((REGIONS.find(x => x.id === activeView) || REGIONS[0]).bbox); };
     document.getElementById('btn-autotrim').onclick = () => {
       DATA.counties.forEach(c => { const st = countyState[c.id], tid = st.tid || st.origTid; if (tid && countyStats(c, tid).avgMi > OUTLIER_MI) st.tid = null; });
-      renderPills(); renderSidebar(); draw();
+      saveLocal(); renderPills(); renderSidebar(); draw();
     };
     document.getElementById('btn-reset').onclick = () => {
       DATA.counties.forEach(c => { countyState[c.id].tid = countyState[c.id].origTid; });
-      renderPills(); renderSidebar(); draw();
+      saveLocal(); renderPills(); renderSidebar(); draw();
     };
+    function saveLocal() {
+      try {
+        const diff = {};
+        DATA.counties.forEach(c => {
+          if (countyState[c.id].tid !== countyState[c.id].origTid) diff[c.id] = countyState[c.id].tid;
+        });
+        localStorage.setItem('hdmk_terr_edits_v1', JSON.stringify(diff));
+      } catch (_) {}
+    }
+    try {
+      const saved = JSON.parse(localStorage.getItem('hdmk_terr_edits_v1') || '{}');
+      Object.entries(saved).forEach(([id, tid]) => { if (countyState[id]) countyState[id].tid = tid; });
+    } catch (_) {}
+
+    // Hook saveLocal into reset/autotrim
+    const origReset = document.getElementById('btn-reset').onclick;
+    document.getElementById('btn-reset').onclick = () => { origReset(); saveLocal(); };
+    const origTrim = document.getElementById('btn-autotrim').onclick;
+    document.getElementById('btn-autotrim').onclick = () => { origTrim(); saveLocal(); };
+
     document.getElementById('btn-copy').onclick = async () => {
-      const lines = ['HDMK Territory County/Parish Decisions:'];
-      Object.entries(TERRITORIES).forEach(([tid, t]) => {
+      saveLocal();
+      const targetTerrs = activeTerr ? [[activeTerr, TERRITORIES[activeTerr]]] : Object.entries(TERRITORIES);
+      const lines = [activeTerr ? `HDMK ${TERRITORIES[activeTerr].name} Service Area Update:` : 'HDMK Territory Service Area Updates:'];
+      let anyChange = false;
+      targetTerrs.forEach(([tid, t]) => {
         const cut = DATA.counties.filter(c => countyState[c.id].origTid === tid && !countyState[c.id].tid).map(c => c.n);
         const added = DATA.counties.filter(c => !countyState[c.id].origTid && countyState[c.id].tid === tid).map(c => c.n);
         const kept = DATA.counties.filter(c => countyState[c.id].tid === tid).map(c => c.n);
-        if (cut.length || added.length) lines.push(`- ${tid} (${t.name}): KEEP [${kept.join(', ')}]${cut.length ? ` | CUT [${cut.join(', ')}]` : ''}${added.length ? ` | ADD [${added.join(', ')}]` : ''}`);
-        else lines.push(`- ${tid} (${t.name}): unchanged (${kept.length})`);
+        if (cut.length || added.length || activeTerr) {
+          if (cut.length || added.length) anyChange = true;
+          lines.push(`• ${t.name} (${t.state}):`);
+          lines.push(`  ON (Serve): ${kept.length ? kept.join(', ') : 'None'}`);
+          if (cut.length) lines.push(`  TURN OFF: ${cut.join(', ')}`);
+          if (added.length) lines.push(`  ADDED: ${added.join(', ')}`);
+        }
       });
-      try { await navigator.clipboard.writeText(lines.join('\n')); const b = document.getElementById('btn-copy'); b.textContent = 'Copied!'; setTimeout(() => b.textContent = 'Copy Keep/Cut List', 1800); }
-      catch (_) { prompt('Copy list:', lines.join('\n')); }
+      if (!anyChange && !activeTerr) {
+        lines.push('(All 11 territories unchanged — no counties turned off yet)');
+      }
+      const text = lines.join('\n');
+      const b = document.getElementById('btn-copy');
+      try { await navigator.clipboard.writeText(text); } catch (_) {}
+      if (navigator.share && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)) {
+        try { await navigator.share({ title: 'HDMK Service Area Update', text }); return; } catch (_) {}
+      }
+      b.textContent = 'Copied to Clipboard!';
+      setTimeout(() => b.textContent = 'Send / Copy My Changes', 2200);
     };
 
     window.addEventListener('resize', draw);
